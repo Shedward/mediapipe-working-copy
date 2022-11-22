@@ -15,7 +15,7 @@
 """Configuration helper for iOS app bundle ids and provisioning profiles.
 """
 
-BUNDLE_ID_PREFIX = "*SEE_IOS_INSTRUCTIONS*.mediapipe.examples"
+BUNDLE_ID_PREFIX = "8b622a48-8d5a-42bd-8c59-7904348a5b60.mediapipe.examples"
 
 # Look for a provisioning profile in the example's directory first,
 # otherwise look for a common one.

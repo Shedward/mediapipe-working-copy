@@ -30,10 +30,7 @@ static NSString* const kGraphName = @"face_effect_gpu";
 
 static const char* kInputStream = "input_video";
 static const char* kOutputStream = "output_video";
-static const char* kMultiFaceGeometryStream = "multi_face_geometry";
 static const char* kVideoQueueLabel = "com.google.mediapipe.example.videoQueue";
-static const char* kSelectedEffectIdInputStream = "selected_effect_id";
-static const char* kUseFaceDetectionInputSourceInputSidePacket = "use_face_detection_input_source";
 
 static const BOOL kUseFaceDetectionInputSource = NO;
 static const int kMatrixTranslationZIndex = 14;
@@ -103,14 +100,10 @@ static const int kSelectedEffectIdGlasses = 2;
 
   // Pass the kUseFaceDetectionInputSource flag value as an input side packet into the graph.
   std::map<std::string, mediapipe::Packet> side_packets;
-  side_packets[kUseFaceDetectionInputSourceInputSidePacket] =
-      mediapipe::MakePacket<bool>(kUseFaceDetectionInputSource);
 
   // Create MediaPipe graph with mediapipe::CalculatorGraphConfig proto object.
   MPPGraph* newGraph = [[MPPGraph alloc] initWithGraphConfig:config];
-  [newGraph addSidePackets:side_packets];
   [newGraph addFrameOutputStream:kOutputStream outputPacketType:MPPPacketTypePixelBuffer];
-  [newGraph addFrameOutputStream:kMultiFaceGeometryStream outputPacketType:MPPPacketTypeRaw];
   return newGraph;
 }
 
@@ -129,7 +122,7 @@ static const int kSelectedEffectIdGlasses = 2;
   if (kUseFaceDetectionInputSource) {
     _selectedEffectId = kSelectedEffectIdAxis;
   } else {
-    _selectedEffectId = kSelectedEffectIdGlasses;
+    _selectedEffectId = kSelectedEffectIdFacepaint;
   }
 
   _renderer = [[MPPLayerRenderer alloc] init];
@@ -244,22 +237,6 @@ static const int kSelectedEffectIdGlasses = 2;
 - (void)mediapipeGraph:(MPPGraph*)graph
      didOutputPacket:(const ::mediapipe::Packet&)packet
           fromStream:(const std::string&)streamName {
-  if (streamName == kMultiFaceGeometryStream) {
-    if (packet.IsEmpty()) {
-      NSLog(@"[TS:%lld] No face geometry", packet.Timestamp().Value());
-      return;
-    }
-
-    const auto& multiFaceGeometry =
-        packet.Get<std::vector<::mediapipe::face_geometry::FaceGeometry>>();
-    NSLog(@"[TS:%lld] Number of face instances with geometry: %lu ", packet.Timestamp().Value(),
-          multiFaceGeometry.size());
-    for (int faceIndex = 0; faceIndex < multiFaceGeometry.size(); ++faceIndex) {
-      const auto& faceGeometry = multiFaceGeometry[faceIndex];
-      NSLog(@"\tApprox. distance away from camera for face[%d]: %.6f cm", faceIndex,
-            -faceGeometry.pose_transform_matrix().packed_data(kMatrixTranslationZIndex));
-    }
-  }
 }
 
 #pragma mark - MPPInputSourceDelegate methods
@@ -276,19 +253,10 @@ static const int kSelectedEffectIdGlasses = 2;
   mediapipe::Timestamp graphTimestamp(static_cast<mediapipe::TimestampBaseType>(
       mediapipe::Timestamp::kTimestampUnitsPerSecond * CMTimeGetSeconds(timestamp)));
 
-  mediapipe::Packet selectedEffectIdPacket =
-      mediapipe::MakePacket<int>(_selectedEffectId).At(graphTimestamp);
-
   [self.graph sendPixelBuffer:imageBuffer
                    intoStream:kInputStream
                    packetType:MPPPacketTypePixelBuffer
                     timestamp:graphTimestamp];
-
-  // Alongside the input camera frame, we also send the `selected_effect_id` int packet to indicate
-  // which effect should be rendered on this frame.
-  [self.graph movePacket:std::move(selectedEffectIdPacket)
-              intoStream:kSelectedEffectIdInputStream
-                   error:nil];
 }
 
 @end
