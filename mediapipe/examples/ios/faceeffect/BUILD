@@ -16,6 +16,12 @@ load(
     "@build_bazel_rules_apple//apple:ios.bzl",
     "ios_application",
 )
+
+load(
+    "@build_bazel_rules_apple//apple:apple.bzl",
+    "apple_xcframework"
+)
+
 load(
     "//mediapipe/examples/ios:bundle_id.bzl",
     "BUNDLE_ID_PREFIX",
@@ -48,13 +54,73 @@ ios_application(
     ],
 )
 
+apple_xcframework(
+    name = "VideoProcessor",
+    bundle_id = BUNDLE_ID_PREFIX + ".VideoProcessor",
+    framework_type = ["dynamic"],
+    ios = {
+        "simulator": [],
+        "device": ["arm64"],
+    },
+    infoplists = ["Info-lib.plist"],
+    minimum_os_versions = {
+        "ios": "13.0",
+    },
+    public_hdrs = [
+        "VideoProcessor.h"
+    ],
+    deps = [
+        ":VideoProcessorLib",
+        "@ios_opencv//:OpencvFramework",
+    ]
+)
+
+objc_library(
+    name = "VideoProcessorLib",
+    srcs = [
+        "VideoProcessor.mm",
+    ],
+    hdrs = [
+        "VideoProcessor.h",
+    ],
+    copts = ["-std=c++17"],
+        data = [
+        "//mediapipe/graphs/face_effect:face_effect_gpu.binarypb",
+        "//mediapipe/graphs/face_effect/data:facepaint.pngblob",
+        "//mediapipe/modules/face_detection:face_detection_short_range.tflite",
+        "//mediapipe/modules/face_geometry/data:geometry_pipeline_metadata.binarypb",
+        "//mediapipe/modules/face_geometry/data:geometry_pipeline_metadata_detection.binarypb",
+        "//mediapipe/modules/face_geometry/data:geometry_pipeline_metadata_landmarks.binarypb",
+        "//mediapipe/modules/face_landmark:face_landmark.tflite",
+    ],
+    features = ["-layering_check"],
+    sdk_frameworks = [
+        "AVFoundation",
+        "CoreGraphics",
+        "CoreMedia",
+    ],
+    deps = [
+        "//mediapipe/objc:mediapipe_framework_ios",
+    ] + select({
+        "//mediapipe:ios_i386": [],
+        "//mediapipe:ios_x86_64": [],
+        "//conditions:default": [
+            "//mediapipe/framework/formats:matrix_data_cc_proto",
+            "//mediapipe/graphs/face_effect:face_effect_gpu_deps",
+            "//mediapipe/modules/face_geometry/protos:face_geometry_cc_proto",
+        ],
+    }),
+)
+
 objc_library(
     name = "FaceEffectViewController",
     srcs = [
         "FaceEffectViewController.mm",
+        "VideoProcessor.mm",
     ],
     hdrs = [
         "FaceEffectViewController.h",
+        "VideoProcessor.h",
     ],
     copts = ["-std=c++17"],
     data = [

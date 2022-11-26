@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #import "FaceEffectViewController.h"
+#import "VideoProcessor.h"
 
 #import "mediapipe/objc/MPPCameraInputSource.h"
 #import "mediapipe/objc/MPPGraph.h"
@@ -39,12 +40,7 @@ static const int kSelectedEffectIdAxis = 0;
 static const int kSelectedEffectIdFacepaint = 1;
 static const int kSelectedEffectIdGlasses = 2;
 
-@interface FaceEffectViewController () <MPPGraphDelegate, MPPInputSourceDelegate>
-
-// The MediaPipe graph currently in use. Initialized in viewDidLoad, started in viewWillAppear: and
-// sent video frames on _videoQueue.
-@property(nonatomic) MPPGraph* graph;
-
+@interface FaceEffectViewController () <MPPInputSourceDelegate, VideoProcessorDelegate>
 @end
 
 @implementation FaceEffectViewController {
@@ -63,49 +59,13 @@ static const int kSelectedEffectIdGlasses = 2;
   IBOutlet UIView* _liveView;
   /// Render frames in a layer.
   MPPLayerRenderer* _renderer;
-
   /// Process camera frames on this queue.
   dispatch_queue_t _videoQueue;
+  /// Processor
+  VideoProcessor* _processor;
 }
 
 #pragma mark - Cleanup methods
-
-- (void)dealloc {
-  self.graph.delegate = nil;
-  [self.graph cancel];
-  // Ignore errors since we're cleaning up.
-  [self.graph closeAllInputStreamsWithError:nil];
-  [self.graph waitUntilDoneWithError:nil];
-}
-
-#pragma mark - MediaPipe graph methods
-
-+ (MPPGraph*)loadGraphFromResource:(NSString*)resource {
-  // Load the graph config resource.
-  NSError* configLoadError = nil;
-  NSBundle* bundle = [NSBundle bundleForClass:[self class]];
-  if (!resource || resource.length == 0) {
-    return nil;
-  }
-  NSURL* graphURL = [bundle URLForResource:resource withExtension:@"binarypb"];
-  NSData* data = [NSData dataWithContentsOfURL:graphURL options:0 error:&configLoadError];
-  if (!data) {
-    NSLog(@"Failed to load MediaPipe graph config: %@", configLoadError);
-    return nil;
-  }
-
-  // Parse the graph config resource into mediapipe::CalculatorGraphConfig proto object.
-  mediapipe::CalculatorGraphConfig config;
-  config.ParseFromArray(data.bytes, data.length);
-
-  // Pass the kUseFaceDetectionInputSource flag value as an input side packet into the graph.
-  std::map<std::string, mediapipe::Packet> side_packets;
-
-  // Create MediaPipe graph with mediapipe::CalculatorGraphConfig proto object.
-  MPPGraph* newGraph = [[MPPGraph alloc] initWithGraphConfig:config];
-  [newGraph addFrameOutputStream:kOutputStream outputPacketType:MPPPacketTypePixelBuffer];
-  return newGraph;
-}
 
 #pragma mark - UIViewController methods
 
@@ -142,11 +102,8 @@ static const int kSelectedEffectIdGlasses = 2;
   // The frame's native format is rotated with respect to the portrait orientation.
   _cameraSource.orientation = AVCaptureVideoOrientationPortrait;
   _cameraSource.videoMirrored = YES;
-
-  self.graph = [[self class] loadGraphFromResource:kGraphName];
-  self.graph.delegate = self;
-  // Set maxFramesInFlight to a small value to avoid memory contention for real-time processing.
-  self.graph.maxFramesInFlight = 2;
+  _processor = [[VideoProcessor alloc] init];
+  _processor.delegate = self;
 }
 
 // In this application, there is only one ViewController which has no navigation to other view
@@ -170,10 +127,7 @@ static const int kSelectedEffectIdGlasses = 2;
 
 - (void)startGraphAndCamera {
   // Start running self.graph.
-  NSError* error;
-  if (![self.graph startWithError:&error]) {
-    NSLog(@"Failed to start graph: %@", error);
-  }
+    [_processor startProcessingWithGraphName:kGraphName];
 
   // Start fetching frames from the camera.
   dispatch_async(_videoQueue, ^{
@@ -212,31 +166,19 @@ static const int kSelectedEffectIdGlasses = 2;
   });
 }
 
-#pragma mark - MPPGraphDelegate methods
+#pragma mark - VideoProcessorDelegate methods
 
-// Receives CVPixelBufferRef from the MediaPipe graph. Invoked on a MediaPipe worker thread.
-- (void)mediapipeGraph:(MPPGraph*)graph
-    didOutputPixelBuffer:(CVPixelBufferRef)pixelBuffer
-              fromStream:(const std::string&)streamName {
-  if (streamName == kOutputStream) {
-    // Display the captured image on the screen.
-    CVPixelBufferRetain(pixelBuffer);
+- (void)videoProcessor:(VideoProcessor *)processor didProcessFrame:(CVPixelBufferRef)frame timestamp:(CMTime)timestamp {
+    CVPixelBufferRetain(frame);
     dispatch_async(dispatch_get_main_queue(), ^{
-      _effectSwitchingHintLabel.hidden = kUseFaceDetectionInputSource;
-      [_renderer renderPixelBuffer:pixelBuffer];
-      CVPixelBufferRelease(pixelBuffer);
+        _effectSwitchingHintLabel.hidden = kUseFaceDetectionInputSource;
+        [_renderer renderPixelBuffer:frame];
+        CVPixelBufferRelease(frame);
     });
-  }
 }
 
-// Receives a raw packet from the MediaPipe graph. Invoked on a MediaPipe worker thread.
-//
-// This callback demonstrates how the output face geometry packet can be obtained and used in an
-// iOS app. As an example, the Z-translation component of the face pose transform matrix is logged
-// for each face being equal to the approximate distance away from the camera in centimeters.
-- (void)mediapipeGraph:(MPPGraph*)graph
-     didOutputPacket:(const ::mediapipe::Packet&)packet
-          fromStream:(const std::string&)streamName {
+- (void)videoProcessor:(VideoProcessor *)processor didFailedWithError:(NSError *)error {
+    NSLog(@"Video processor error: %@", error);
 }
 
 #pragma mark - MPPInputSourceDelegate methods
@@ -250,13 +192,7 @@ static const int kSelectedEffectIdGlasses = 2;
     return;
   }
 
-  mediapipe::Timestamp graphTimestamp(static_cast<mediapipe::TimestampBaseType>(
-      mediapipe::Timestamp::kTimestampUnitsPerSecond * CMTimeGetSeconds(timestamp)));
-
-  [self.graph sendPixelBuffer:imageBuffer
-                   intoStream:kInputStream
-                   packetType:MPPPacketTypePixelBuffer
-                    timestamp:graphTimestamp];
+  [_processor processFrame:imageBuffer timestamp:timestamp];
 }
 
 @end
